@@ -1,74 +1,73 @@
-import requests
 from bs4 import BeautifulSoup
+from openai import OpenAI
 import csv
-import sys
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import time
 
-def get_google_scholar_profile(public_url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
 
-    response = requests.get(public_url, headers=headers)
-    if response.status_code != 200:
-        print("Failed to retrieve the profile.")
-        return None
+client = OpenAI()
 
-    return response.text
 
-def parse_publications(html_content):
-    soup = BeautifulSoup(html_content, 'html.parser')
-    publications = []
+def fetch_website_content(url):
+    # Setup Chrome with Selenium WebDriver Manager
+    service = Service(ChromeDriverManager().install())
+    options = webdriver.ChromeOptions()
+    # options.add_argument('--headless')  # Uncomment if you don't want the browser to open up
+    driver = webdriver.Chrome(service=service, options=options)
 
-    for row in soup.find_all('tr', class_='gsc_a_tr'):
-        title_element = row.find('a', class_='gsc_a_at')
-        title = title_element.text if title_element else "N/A"
+    driver.get(url)
+    time.sleep(5)  # Wait for the page to load. Adjust time as necessary.
 
-        authors_element = row.find('div', class_='gs_gray')
-        authors = authors_element.text if authors_element else "N/A"
+    # Now the page's JavaScript has been executed and content should be loaded
+    html_content = driver.page_source
 
-        journal_element = row.find_all('div', class_='gs_gray')[1]
-        journal = journal_element.text if len(row.find_all('div', class_='gs_gray')) > 1 else "N/A"
+    driver.quit()  # Close the browser
+    return html_content
 
-        year_element = row.find('span', class_='gsc_a_h')
-        year = year_element.text if year_element else "N/A"
 
-        try:
-            year = int(year)
-        except ValueError:
-            year = 0
+def extract_text_from_html(html_content):
+    soup = BeautifulSoup(html_content, "html.parser")
+    return soup.get_text(separator="\n", strip=True)
 
-        publications.append({
-            'title': title,
-            'authors': authors,
-            'journal': journal,
-            'year': year
-        })
 
-    return publications
+def generate_publications_text(html_text):
+    completion = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "system",
+                "content": 'Extract all publications with title, authors, journal, and year from given text. You return text like Title: [title]\nAuthors: [author name, author name, author names including "..."]\nJournal: [journal]\nYear: [year] for up to 10 publications. Dont make anything bold or add any other formatting or numbers, just list like instructed.',
+            },
+            {"role": "user", "content": html_text},
+        ],
+    )
 
-def process_scholar_profiles(csv_file_path):
-    with open(csv_file_path, newline='') as csvfile, open('output.txt', 'w') as output_file:
+    return completion.choices[0].message.content
+
+
+def process_publications_from_csv(input_csv, output_filename):
+    with open(input_csv, newline="") as csvfile, open(
+        output_filename, "w"
+    ) as output_file:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            output_file.write(f"Name: {row['name']}\n\n")
-            html_content = get_google_scholar_profile(row['link'])
-            if html_content:
-                publications = parse_publications(html_content)
-                latest_publications = sorted(publications, key=lambda x: x['year'], reverse=True)[:10]
-                for publication in latest_publications:
-                    output_file.write(f"Title: {publication['title']}\n")
-                    output_file.write(f"Authors: {publication['authors']}\n")
-                    output_file.write(f"Journal: {publication['journal']}\n")
-                    output_file.write(f"Year: {publication['year']}\n")
-                    output_file.write("-" * 80 + "\n")
-            output_file.write("\n")  # Add a newline for spacing between scholars
+            print(f"Processing {row['name']}...")
+            name = row["name"]
+            link = row["link"]
+            html_content = fetch_website_content(link)
+            html_text = extract_text_from_html(html_content)
+            publications_text = generate_publications_text(html_text)
+            output_file.write(
+                f"{name}\n\n{publications_text}\n\n------------------------------\n\n"
+            )
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python scrape_scholars.py input.csv")
-        sys.exit(1)
-    csv_file_path = sys.argv[1]
-    process_scholar_profiles(csv_file_path)
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    input_csv = sys.argv[1]  # Get CSV filename from command line argument
+    output_filename = "output.txt"  # Define your output filename
+    process_publications_from_csv(input_csv, output_filename)
+    print(f"Processed publications saved to {output_filename}")

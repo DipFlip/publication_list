@@ -1,2 +1,4 @@
-requests
 beautifulsoup4
+openai
+selenium
+webdriver_manager
