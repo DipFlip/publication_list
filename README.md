@@ -22,7 +22,7 @@ You can install the required packages using the following command:
 
 ```bash
 pip install -r requirements.txt
-
+```
 ## Usage
 - Put authors and Google Scholar links in a csv file like the included `input.csv`
 - Run `python publication_list.py input.csv`
